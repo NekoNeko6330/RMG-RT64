@@ -5,6 +5,7 @@ on: [push, pull_request]
 jobs:
   build-linux:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { os: ubuntu-24.04, features: ON, architecture: x86_64, configuration: Release }
@@ -38,7 +39,7 @@ jobs:
           sudo apt-get -y upgrade
           sudo apt-get -y install cmake libusb-1.0-0-dev libhidapi-dev libsamplerate0-dev libspeex-dev libminizip-dev libfreetype6-dev \
             libgl1-mesa-dev libglu1-mesa-dev pkg-config zlib1g-dev binutils-dev libspeexdsp-dev qt6-base-dev libqt6svg6-dev libqt6websockets6-dev libvulkan-dev \
-            build-essential nasm git zip appstream xvfb qt6ct mesa-vulkan-drivers libzstd-dev
+            build-essential nasm git zip appstream xvfb qt6ct mesa-vulkan-drivers libzstd-dev libdbus-1-dev
 
           # sdl3 dependencies
           sudo apt-get -y install build-essential git make \
@@ -118,6 +119,7 @@ jobs:
   build-windows:
     runs-on: windows-2025
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { features: ON, configuration: Release }
@@ -176,6 +178,14 @@ jobs:
           cmake --install "$build_dir" --strip --prefix="$src_dir"
           cmake --build "$build_dir" --target=bundle_dependencies
         shell: msys2 {0}
+      - name: Show RT64 configure output
+        if: failure()
+        run: |
+          cmake -S Source/3rdParty/rt64 -B Build/rt64-diagnose -G "MSYS Makefiles" \
+                -DCMAKE_BUILD_TYPE="${{ matrix.configuration }}" \
+                -DRT64_BUILD_PLUGIN=ON -DRT64_PLUGIN_CONFIG_GUI=ON \
+                -DRT64_MUPEN64PLUS_API_DIR="$(pwd)/Source/3rdParty/mupen64plus-core/src/api" 2>&1 | tail -n 150 || true
+        shell: msys2 {0}
       - name: Create Installer
         if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' }}
         run: .\Build\Release\Source\Installer\CreateInstaller.bat
@@ -195,3 +205,30 @@ jobs:
         with:
           name: RMG-Setup-Windows64-${{ env.GIT_REVISION }}
           path: Bin/*.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+      - name: Package artifacts
+        run: |
+          mkdir -p release
+          for dir in artifacts/*; do
+            name="$(basename "$dir")"
+            case "$name" in
+              RMG-Portable-Windows64-*) (cd "$dir" && zip -r "../../release/$name.zip" .) ;;
+              RMG-Setup-Windows64-*) cp "$dir"/*.exe release/ ;;
+              RMG-Portable-Linux64-*) cp "$dir"/*.AppImage release/ ;;
+            esac
+          done
+          ls -la release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
