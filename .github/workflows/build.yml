@@ -1,6 +1,14 @@
 name: RMG
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Create a GitHub release with this tag (e.g. rt64-v0.1.0)"
+        required: false
+        default: ""
 
 jobs:
   build-linux:
@@ -207,7 +215,7 @@ jobs:
           path: Bin/*.exe
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [build-linux, build-windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -230,5 +238,7 @@ jobs:
           ls -la release
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: release/*
           generate_release_notes: true
