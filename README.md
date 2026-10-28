@@ -16,6 +16,10 @@ You can download Rosalie's Mupen GUI on
 * [Arch User Repository](https://aur.archlinux.org/packages/rmg)
 * [Fedora COPR](https://copr.fedorainfracloud.org/coprs/rosalie/RMG/)
 
+## RT64
+
+This fork bundles [RT64](https://github.com/rt64/rt64) as an additional graphics plugin (`mupen64plus-video-rt64`). Select it in `Settings -> Plugins` and use the `Graphics` toolbar button (or the configure button next to the plugin) to open its settings: resolution, antialiasing, aspect ratio, frame-rate interpolation (`Refresh rate mode`: `Display` or `Manual`), display buffering and more. The settings are stored in RT64's own `rt64.json` (`~/.config/.rt64/` on Linux, `%LOCALAPPDATA%\rt64\` on Windows) and most of them apply immediately, also while a game is running. With `Developer mode` enabled, F10 opens the RT64 inspector in-game.
+
 ## Netplay
 
 You can use netplay with the following methods:
