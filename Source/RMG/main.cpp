@@ -17,15 +17,13 @@
 #include <iostream>
 #include <cstdlib>
 
-#ifdef _WIN32
-#include <Windows.h>
-#include <Dbghelp.h>
-#include <wchar.h>
-#else
+#ifndef _WIN32
 #include <signal.h>
 #endif
 
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/CrashLog.hpp>
+#include <RMG-Core/Error.hpp>
 #include <RMG-Core/Version.hpp>
 
 //
@@ -46,74 +44,7 @@ static void message_handler(QtMsgType type, const QMessageLogContext &context, c
     std::cerr << msg.toStdString() << std::endl;
 }
 
-#ifdef _WIN32
-typedef BOOL (WINAPI* ptr_MiniDumpWriteDump)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE,
-                                             PMINIDUMP_EXCEPTION_INFORMATION,
-                                             PMINIDUMP_USER_STREAM_INFORMATION,
-                                             PMINIDUMP_CALLBACK_INFORMATION);
-static void show_error(const char* error)
-{
-    MessageBoxA(nullptr, error, "RMG Crash Handler", MB_OK | MB_ICONERROR);
-}
-
-static LONG WINAPI exception_handler(_EXCEPTION_POINTERS* ExceptionInfo)
-{
-    HMODULE dbgHelpModule = LoadLibraryA("Dbghelp.dll");
-    if (dbgHelpModule == nullptr)
-    {
-        show_error("Failed to find Dbghelp.dll!");
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-
-    ptr_MiniDumpWriteDump miniDumpWriteDump = 
-        (ptr_MiniDumpWriteDump)GetProcAddress(dbgHelpModule, "MiniDumpWriteDump");
-    if (miniDumpWriteDump == nullptr)
-    {
-        show_error("Failed to retrieve MiniDumpWriteDump from Dbghelp.dll!");
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-
-    wchar_t dump_filename[MAX_PATH+1] = {0};
-    DWORD filename_len = GetModuleFileNameW(nullptr, dump_filename, MAX_PATH);
-    if (filename_len <= 0)
-    {
-        show_error("Failed to retrieve path of current process!");
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-    
-    if ((filename_len + 4) > MAX_PATH)
-    { // replace .exe with .dmp
-        wcscpy((dump_filename + (filename_len - 4)), L".dmp");
-    }
-    else
-    { // append .dmp to .exe
-        wcscpy((dump_filename + filename_len), L".dmp");
-    }
-
-    HANDLE hDumpFile = CreateFileW(dump_filename, GENERIC_WRITE, FILE_SHARE_WRITE, 
-                                   nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-
-    if (hDumpFile != INVALID_HANDLE_VALUE)
-    {
-        _MINIDUMP_EXCEPTION_INFORMATION exceptionInfo;
-        exceptionInfo.ThreadId = GetCurrentThreadId();
-        exceptionInfo.ExceptionPointers = ExceptionInfo;
-        exceptionInfo.ClientPointers = FALSE;
-
-        BOOL ret = miniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), 
-                                     hDumpFile, MiniDumpNormal, &exceptionInfo, 
-                                     nullptr, nullptr);
-        if (!ret)
-        {
-            show_error("Failed to save minidump file!");
-        }
-    }
-
-    // we've saved the minidump,
-    // now we can crash safely
-    return EXCEPTION_CONTINUE_SEARCH;
-}
-#else
+#ifndef _WIN32
 static void signal_handler(int sig)
 {
     QGuiApplication::quit();
@@ -129,12 +60,15 @@ int main(int argc, char **argv)
     // install message handler
     qInstallMessageHandler(message_handler);
 
-#ifdef _WIN32
-    // on Windows, to aid with crash debugging
-    // we'll install a crash handler and
-    // write out a minidump there
-    SetUnhandledExceptionFilter(exception_handler);
-#else
+    // install the crash handler, which writes
+    // a crash log (and a minidump on Windows)
+    // to the CrashLogs directory when RMG crashes
+    if (!CoreSetupCrashLog())
+    {
+        std::cerr << "CoreSetupCrashLog Failed: " << CoreGetError() << std::endl;
+    }
+
+#ifndef _WIN32
     // on Linux we need to install signal handlers,
     // so we can exit cleanly when the user presses
     // i.e control+c

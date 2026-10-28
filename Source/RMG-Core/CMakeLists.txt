@@ -34,6 +34,7 @@ set(RMG_CORE_SOURCES
     Emulation.cpp
     SaveState.cpp
     Callback.cpp
+    CrashLog.cpp
     Settings.cpp
     Archive.cpp
     Library.cpp

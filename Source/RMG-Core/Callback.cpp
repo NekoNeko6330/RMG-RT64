@@ -10,6 +10,7 @@
 #define CORE_INTERNAL
 #include "ConvertStringEncoding.hpp"
 #include "Callback.hpp"
+#include "CrashLog.hpp"
 #include "Library.hpp"
 
 #include <iostream>
@@ -55,6 +56,9 @@ void CoreDebugCallback(void* context, int level, const char* message)
     {
         std::cout << contextString << messageString << std::endl;
     }
+
+    // remember the message for the crash log
+    CoreCrashLogAddMessage(contextString + messageString);
 
     // convert string encoding accordingly
     if (messageString.starts_with("IS64:"))

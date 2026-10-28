@@ -20,6 +20,10 @@ You can download Rosalie's Mupen GUI on
 
 This fork bundles [RT64](https://github.com/rt64/rt64) as an additional graphics plugin (`mupen64plus-video-rt64`). Select it in `Settings -> Plugins` and use the `Graphics` toolbar button (or the configure button next to the plugin) to open its settings: resolution, antialiasing, aspect ratio, frame-rate interpolation (`Refresh rate mode`: `Display` or `Manual`), display buffering and more. The settings are stored in RT64's own `rt64.json` (`~/.config/.rt64/` on Linux, `%LOCALAPPDATA%\rt64\` on Windows) and most of them apply immediately, also while a game is running. With `Developer mode` enabled, F10 opens the RT64 inspector in-game.
 
+## Crash logs
+
+When RMG crashes, a crash log is written to the `CrashLogs` directory (next to `Data`, `Save` and `Screenshots` in portable mode, otherwise inside the user data directory). Every crash is appended to `CrashLogs/crashlogs_all.txt` and additionally saved as its own `crash_<date>_<time>.txt` file (plus a `.dmp` minidump on Windows). A crash log contains the reason for the crash, a stack trace, the ROM that was running and the most recent core/plugin log messages, which helps a lot when reporting an issue.
+
 ## Netplay
 
 You can use netplay with the following methods:

@@ -20,6 +20,7 @@
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
+#include "CrashLog.hpp"
 
 #include <string>
 #include <cstdlib>
@@ -149,6 +150,8 @@ CORE_EXPORT bool CoreOpenRom(std::filesystem::path file)
     {
         // store ROM path
         l_RomPath = file;
+        // remember the ROM for the crash log
+        CoreCrashLogSetRom(file.string());
         // store default ROM settings
         CoreStoreCurrentDefaultRomSettings();
         // apply rom settings overlay
@@ -248,6 +251,7 @@ CORE_EXPORT bool CoreCloseRom(void)
     // so we can safely say the ROM/disk isn't open
     // anymore here
     l_HasRomOpen = false;
+    CoreCrashLogSetRom("");
 
     // attempt to clean temporary extracted disk file
     if (l_HasExtractedDisk)
