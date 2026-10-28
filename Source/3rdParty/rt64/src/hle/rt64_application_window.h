@@ -56,6 +56,7 @@ namespace RT64 {
         SDL_EventFilter sdlEventFilterStored = nullptr;
         void *sdlEventFilterUserdata = nullptr;
         bool sdlEventFilterInstalled = false;
+        bool externalWindow = false;
 
 #   ifdef _WIN32
         HHOOK windowHook = nullptr;
@@ -67,6 +68,7 @@ namespace RT64 {
         ~ApplicationWindow();
         void setup(RenderWindow window, Listener *listener, uint32_t threadId);
         void setup(const char *windowTitle, Listener *listener);
+        void setupExternal(Listener *listener, uint32_t refreshRate);
         void setFullScreen(bool newFullScreen);
         void makeResizable();
         void detectRefreshRate();

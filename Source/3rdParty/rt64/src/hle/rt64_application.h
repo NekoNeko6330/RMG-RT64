@@ -40,6 +40,11 @@ namespace RT64 {
         std::filesystem::path dataPath;
         bool detectDataPath = true;
         bool useConfigurationFile = true;
+
+        // Set when the host owns the window (e.g. an emulator plugin). RT64 will neither create nor
+        // query a native window and uses externalRefreshRate (0 = unknown) for display timing.
+        bool externalWindow = false;
+        uint32_t externalRefreshRate = 0;
     };
 
     struct Application : public ApplicationWindow::Listener {

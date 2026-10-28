@@ -41,6 +41,8 @@ namespace plume {
     // so they're not under the limit set by the the device or the backend.
     static const uint32_t MaxQueuesPerFamilyCount = 4;
 
+    VulkanExternalHooks VulkanExternal;
+
     // Required extensions.
 
     static const std::unordered_set<std::string> RequiredInstanceExtensions = {
@@ -2082,6 +2084,17 @@ namespace plume {
 
         VkResult res;
 
+        if (VulkanExternal.createSurface != nullptr) {
+            VulkanInterface *renderInterface = commandQueue->device->renderInterface;
+            if (!VulkanExternal.createSurface(renderInterface->instance, &surface)) {
+                fprintf(stderr, "External surface creation failed.\n");
+                surface = VK_NULL_HANDLE;
+                return;
+            }
+
+            externalSurface = true;
+        }
+        else {
 #   ifdef _WIN64
         assert(desc.renderWindow != 0);
         VkWin32SurfaceCreateInfoKHR surfaceCreateInfo = {};
@@ -2145,6 +2158,7 @@ namespace plume {
             return;
         }
 #   endif
+        }
 
         VkBool32 presentSupported = false;
         VkPhysicalDevice physicalDevice = commandQueue->device->physicalDevice;
@@ -2244,7 +2258,7 @@ namespace plume {
         releaseImageViews();
         releaseSwapChain();
 
-        if (surface != VK_NULL_HANDLE) {
+        if ((surface != VK_NULL_HANDLE) && !externalSurface) {
             VulkanInterface *renderInterface = commandQueue->device->renderInterface;
             vkDestroySurfaceKHR(renderInterface->instance, surface, nullptr);
         }
@@ -2458,6 +2472,10 @@ namespace plume {
     }
 
     void VulkanSwapChain::getWindowSize(uint32_t &dstWidth, uint32_t &dstHeight) const {
+        if ((VulkanExternal.getWindowSize != nullptr) && VulkanExternal.getWindowSize(&dstWidth, &dstHeight)) {
+            return;
+        }
+
 #   if defined(_WIN64)
         RECT rect;
         GetClientRect(desc.renderWindow, &rect);
@@ -4496,6 +4514,25 @@ namespace plume {
 
         std::unordered_set<std::string> requiredExtensions = RequiredInstanceExtensions;
         std::unordered_set<std::string> supportedOptionalExtensions;
+
+        if (VulkanExternal.getInstanceExtensions != nullptr) {
+            // The host decides which surface extensions its window system requires.
+            requiredExtensions.erase("VK_KHR_win32_surface");
+            requiredExtensions.erase("VK_KHR_android_surface");
+            requiredExtensions.erase("VK_KHR_xlib_surface");
+            requiredExtensions.erase("VK_EXT_metal_surface");
+
+            const char **externalExtensionNames = nullptr;
+            uint32_t externalExtensionCount = 0;
+            if (!VulkanExternal.getInstanceExtensions(&externalExtensionNames, &externalExtensionCount)) {
+                fprintf(stderr, "Unable to retrieve the instance extensions from the host.\n");
+                return;
+            }
+
+            for (uint32_t i = 0; i < externalExtensionCount; i++) {
+                requiredExtensions.insert(externalExtensionNames[i]);
+            }
+        }
 #   if DLSS_ENABLED
         const std::unordered_set<std::string> dlssExtensions = DLSS::getRequiredInstanceExtensionsVulkan();
 #   endif
@@ -4604,6 +4641,10 @@ namespace plume {
 
     VulkanInterface::~VulkanInterface() {
         if (instance != nullptr) {
+            if (VulkanExternal.destroyInstance != nullptr) {
+                VulkanExternal.destroyInstance();
+            }
+
             vkDestroyInstance(instance, nullptr);
         }
     }

@@ -12,6 +12,9 @@ option(RT64_STATIC "Build RT64 as a static library" OFF)
 
 
 option(RT64_SDL_WINDOW_VULKAN "Build RT64 to expect an SDL Window outside of Windows" OFF)
+option(RT64_BUILD_PLUGIN "Build RT64 as a mupen64plus/Project64 video plugin" OFF)
+option(RT64_PLUGIN_CONFIG_GUI "Build the Qt configuration dialog for the plugin" OFF)
+set(RT64_MUPEN64PLUS_API_DIR "${PROJECT_SOURCE_DIR}/src/contrib/mupen64plus-core/src/api" CACHE PATH "Directory with the mupen64plus API headers")
 
 if (NOT ${RT64_STATIC})
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -42,9 +45,11 @@ if (WIN32)
         __PRFCHWINTRIN_H
     )
 
-    # Dependencies that must be next to the DLL.
-    configure_file("${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxcompiler.dll" "dxcompiler.dll" COPYONLY)
-    configure_file("${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxil.dll" "dxil.dll" COPYONLY)
+    if (NOT RT64_BUILD_PLUGIN)
+        # Dependencies that must be next to the DLL.
+        configure_file("${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxcompiler.dll" "dxcompiler.dll" COPYONLY)
+        configure_file("${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxil.dll" "dxil.dll" COPYONLY)
+    endif()
 elseif (APPLE)
     if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         # find zlib and include in dyld path
@@ -71,6 +76,17 @@ set(ZSTD_BUILD_SHARED OFF)
 
 add_subdirectory(src/tools/file_to_c)
 add_subdirectory(src/contrib/re-spirv)
+if (RT64_BUILD_PLUGIN)
+    if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+        # Use the desktop portal for file dialogs instead of pulling GTK into the host process.
+        set(NFD_PORTAL ON CACHE BOOL "" FORCE)
+    endif()
+    if (WIN32)
+        # The plugin only ships the Vulkan backend.
+        set(PLUME_D3D12_ENABLED OFF CACHE BOOL "" FORCE)
+    endif()
+endif()
+
 add_subdirectory(src/contrib/nativefiledialog-extended)
 add_subdirectory(src/contrib/zstd/build/cmake)
 
@@ -99,8 +115,10 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     endif()
 endif()
 
-set(ANDROID_PLATFORM android-24)
-set(ANDROID_ABI arm64-v8a)
+if (ANDROID)
+    set(ANDROID_PLATFORM android-24)
+    set(ANDROID_ABI arm64-v8a)
+endif()
 
 # For DXC
 set (DXC_COMMON_OPTS "-I${PROJECT_SOURCE_DIR}/src")
@@ -115,7 +133,7 @@ set (DXC_RT_OPTS "${DXC_COMMON_OPTS}" "-D" "RT_SHADER" "-T" "lib_6_3" "-fspv-tar
 
 function(build_shader_spirv_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
     add_custom_command(OUTPUT ${OUTNAME}.spv
-        COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.spv
+        COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} -Fo ${OUTNAME}.spv
         DEPENDS ${FILENAME})
     add_custom_command(OUTPUT ${OUTNAME}.spirv.c
         COMMAND file_to_c ${OUTNAME}.spv ${TARGET_NAME}BlobSPIRV ${OUTNAME}.spirv.c ${OUTNAME}.spirv.h
@@ -126,7 +144,7 @@ endfunction()
 
 function(build_shader_dxil_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
     add_custom_command(OUTPUT ${OUTNAME}.dxil
-        COMMAND ${DXC} ${DXC_DXIL_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.dxil
+        COMMAND ${DXC} ${DXC_DXIL_OPTS} ${ARGN} ${FILENAME} -Fo ${OUTNAME}.dxil
         DEPENDS ${FILENAME})
     add_custom_command(OUTPUT ${OUTNAME}.dxil.c
         COMMAND file_to_c ${OUTNAME}.dxil ${TARGET_NAME}BlobDXIL ${OUTNAME}.dxil.c ${OUTNAME}.dxil.h
@@ -137,7 +155,7 @@ endfunction()
 
 function(build_shader_msl_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
     add_custom_command(OUTPUT ${OUTNAME}.spv
-            COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.spv
+            COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} -Fo ${OUTNAME}.spv
             DEPENDS ${FILENAME})
     add_custom_command(OUTPUT ${OUTNAME}.metal
             COMMAND spirv_cross_msl ${OUTNAME}.spv ${OUTNAME}.metal
@@ -171,7 +189,7 @@ function(build_shader TARGETOBJ SHADERNAME OPTIONS)
     cmake_path(GET OUTNAME PARENT_PATH OUTPUT_DIR)
     file(MAKE_DIRECTORY ${OUTPUT_DIR})
     # Compile DXIL shader binaries if building on Windows
-    if (WIN32)
+    if (WIN32 AND NOT RT64_BUILD_PLUGIN)
         build_shader_dxil_impl(${TARGETOBJ} ${FILENAME} ${TARGET_NAME} ${OUTNAME} ${OPTIONS} ${EXTRA_ARGS})
     endif()
     # Compile Metal shader binaries if building on macOS
@@ -285,7 +303,21 @@ function(build_ray_shader TARGETOBJ SHADERNAME)
 endfunction()
 
 # Point cmake at src/contrib/mupen64plus-win32-deps/SDL2-2.26.3 for SDL2 on windows, look for an installed package on other systems
-if (WIN32)
+if (RT64_BUILD_PLUGIN)
+    # The plugin is loaded into an emulator that may ship an incompatible SDL version of its own,
+    # so SDL2 is built from the vendored sources as a static PIC library and kept private to the plugin.
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC_PIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_UNINSTALL ON CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_SDL2MAIN ON CACHE BOOL "" FORCE)
+    add_subdirectory(src/contrib/SDL2 EXCLUDE_FROM_ALL)
+    # Use the target's include directories so the generated SDL_config.h is found before the generic one.
+    set(SDL2_INCLUDE_DIRS "$<TARGET_PROPERTY:SDL2::SDL2-static,INTERFACE_INCLUDE_DIRECTORIES>")
+    set(SDL2_LIBRARIES SDL2::SDL2-static)
+elseif (WIN32)
     set(SDL2_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/src/contrib/mupen64plus-win32-deps/SDL2-2.26.3/include")
     set(SDL2_LIBRARIES "SDL2" "SDL2main")
     link_directories("${PROJECT_SOURCE_DIR}/src/contrib/mupen64plus-win32-deps/SDL2-2.26.3/lib/x64")
@@ -421,7 +453,7 @@ include_directories(
     "${PROJECT_SOURCE_DIR}/src/contrib/plume"
     "${PROJECT_SOURCE_DIR}/src/contrib/imgui"
     "${PROJECT_SOURCE_DIR}/src/contrib/hlslpp/include"
-    "${PROJECT_SOURCE_DIR}/src/contrib/mupen64plus-core/src/api"
+    "${RT64_MUPEN64PLUS_API_DIR}"
     "${PROJECT_SOURCE_DIR}/src/contrib/nativefiledialog-extended/src/include"
 )
 
@@ -439,6 +471,29 @@ endif()
 set_target_properties(rt64 PROPERTIES OUTPUT_NAME "rt64")
 set_target_properties(rt64 PROPERTIES PREFIX "")
 
+if (RT64_BUILD_PLUGIN)
+    set_target_properties(rt64 PROPERTIES OUTPUT_NAME "mupen64plus-video-rt64")
+    target_compile_definitions(rt64 PRIVATE RT64_BUILD_PLUGIN)
+    target_sources(rt64 PRIVATE
+        "${PROJECT_SOURCE_DIR}/src/api/rt64_api_common.cpp"
+        "${PROJECT_SOURCE_DIR}/src/api/rt64_api_plugin.cpp"
+    )
+    if (NOT MSVC)
+        # Keep the statically linked dependencies (SDL2 in particular) private to the plugin.
+        target_link_options(rt64 PRIVATE -Wl,--exclude-libs,ALL)
+    endif()
+    if (RT64_PLUGIN_CONFIG_GUI)
+        find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
+        # The dialog lives in its own target so Qt's compile definitions (UNICODE on Windows) do not leak into RT64.
+        add_library(rt64_config_qt STATIC "${PROJECT_SOURCE_DIR}/src/api/rt64_api_config_qt.cpp")
+        set_target_properties(rt64_config_qt PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        target_compile_definitions(rt64_config_qt PRIVATE RT64_BUILD_PLUGIN)
+        target_link_libraries(rt64_config_qt PRIVATE plume ${SDL2_LIBRARIES} Qt6::Core Qt6::Gui Qt6::Widgets)
+        target_compile_definitions(rt64 PRIVATE RT64_PLUGIN_CONFIG_GUI)
+        target_link_libraries(rt64 rt64_config_qt)
+    endif()
+endif()
+
 # Add common libraries.
 target_link_libraries(rt64 re-spirv)
 target_link_libraries(rt64 nfd)
@@ -446,8 +501,10 @@ target_link_libraries(rt64 libzstd_static)
 target_link_libraries(rt64 plume)
 
 # Add tools.
-add_subdirectory(src/tools/texture_hasher)
-add_subdirectory(src/tools/texture_packer)
+if (NOT RT64_BUILD_PLUGIN)
+    add_subdirectory(src/tools/texture_hasher)
+    add_subdirectory(src/tools/texture_packer)
+endif()
 
 # Add any Apple-specific source files and libraries
 if (APPLE)
@@ -464,7 +521,13 @@ if (APPLE)
 endif()
 
 # Add any Windows-specific source files and libraries
-if (WIN32)
+if (WIN32 AND RT64_BUILD_PLUGIN)
+    target_sources(rt64 PRIVATE
+        "${PROJECT_SOURCE_DIR}/src/contrib/imgui/backends/imgui_impl_win32.cpp"
+    )
+    target_link_libraries(rt64 shcore dwmapi)
+    target_include_directories(rt64 PRIVATE ${zstd_SOURCE_DIR}/lib)
+elseif (WIN32)
     target_sources(rt64 PRIVATE
         "${PROJECT_SOURCE_DIR}/src/contrib/imgui/backends/imgui_impl_dx12.cpp"
         "${PROJECT_SOURCE_DIR}/src/contrib/imgui/backends/imgui_impl_win32.cpp"
@@ -495,7 +558,7 @@ endif()
 
 preprocess_shader(rt64 "src/shaders/RenderParams.hlsli")
 
-if (${WIN32})
+if (WIN32 AND NOT RT64_BUILD_PLUGIN)
     build_library_shader(rt64 "src/shaders/RasterPS.hlsl" "src/shaders/RasterPSLibrary.hlsl")
     build_library_shader(rt64 "src/shaders/RasterPS.hlsl" "src/shaders/RasterPSLibraryMS.hlsl" "-D MULTISAMPLING")
     build_library_shader(rt64 "src/shaders/RasterVS.hlsl" "src/shaders/RasterVSLibrary.hlsl")

@@ -87,7 +87,7 @@ namespace RT64 {
     }
 
     Application::SetupResult Application::setup(uint32_t threadId) {
-#   ifdef _WIN64
+#   if defined(_WIN64) && !defined(RT64_BUILD_PLUGIN)
         if (!DynamicLibraries::load()) {
             fprintf(stderr, "Failed to load dynamic libraries. Make sure the dependencies are next to the Plugin's DLL.\n");
             return SetupResult::Success;
@@ -119,7 +119,10 @@ namespace RT64 {
         // Create the application window.
         const char *windowTitle = "RT64";
         appWindow = std::make_unique<ApplicationWindow>();
-        if (core.window != RenderWindow{}) {
+        if (appConfig.externalWindow) {
+            appWindow->setupExternal(this, appConfig.externalRefreshRate);
+        }
+        else if (core.window != RenderWindow{}) {
             appWindow->setup(core.window, this, threadId);
         }
         else {
@@ -158,7 +161,7 @@ namespace RT64 {
             // Create a render interface with the preferred backend.
             switch (chosenGraphicsAPI) {
             case UserConfiguration::GraphicsAPI::D3D12:
-#       ifdef _WIN64
+#       if defined(_WIN64) && !defined(RT64_BUILD_PLUGIN)
                 renderInterface = CreateD3D12Interface();
                 break;
 #       else
@@ -662,7 +665,7 @@ namespace RT64 {
             if (userConfig.developerMode) {
                 const std::lock_guard lock(presentQueue->inspectorMutex);
                 if (presentQueue->inspector == nullptr) {
-                    presentQueue->inspector = std::make_unique<Inspector>(device.get(), swapChain.get(), chosenGraphicsAPI, appWindow->sdlWindow);
+                    presentQueue->inspector = std::make_unique<Inspector>(device.get(), swapChain.get(), chosenGraphicsAPI, appWindow->sdlWindow, appConfig.externalWindow);
                     if (!userPaths.isEmpty()) {
                         presentQueue->inspector->setIniPath(userPaths.imguiPath);
                     }

@@ -222,6 +222,7 @@ namespace plume {
     };
 
     struct VulkanSwapChain : RenderSwapChain {
+        bool externalSurface = false;
         RenderSwapChainDesc desc;
         VkSwapchainKHR vk = VK_NULL_HANDLE;
         VulkanCommandQueue *commandQueue = nullptr;
@@ -447,6 +448,17 @@ namespace plume {
         bool beginCapture() override;
         bool endCapture() override;
     };
+
+    // Optional hooks for hosts that own the window and the presentation surface (e.g. an emulator
+    // frontend exposing a video extension). When set, they take precedence over the platform paths.
+    struct VulkanExternalHooks {
+        bool (*getInstanceExtensions)(const char ***extensionNames, uint32_t *extensionCount) = nullptr;
+        bool (*createSurface)(VkInstance instance, VkSurfaceKHR *surface) = nullptr;
+        bool (*getWindowSize)(uint32_t *width, uint32_t *height) = nullptr;
+        void (*destroyInstance)() = nullptr;
+    };
+
+    extern VulkanExternalHooks VulkanExternal;
 
     struct VulkanInterface : RenderInterface {
         VkInstance instance = VK_NULL_HANDLE;

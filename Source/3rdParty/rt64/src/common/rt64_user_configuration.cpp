@@ -144,6 +144,10 @@ namespace RT64 {
     }
 
     UserConfiguration::GraphicsAPI UserConfiguration::resolveGraphicsAPI(GraphicsAPI graphicsAPI) {
+#   if defined(RT64_BUILD_PLUGIN)
+        // Plugin builds only ship the Vulkan backend.
+        return UserConfiguration::GraphicsAPI::Vulkan;
+#   endif
         if (graphicsAPI == UserConfiguration::GraphicsAPI::Automatic) {
 #       if defined(_WIN64)
             // Change the default graphics API when running under Wine to avoid using the D3D12 translation layer when possible. Recreate the default user configuration right afterwards so this new value is assigned.

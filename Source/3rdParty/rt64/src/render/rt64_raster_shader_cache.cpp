@@ -79,7 +79,7 @@ namespace RT64 {
         this->ubershaderThreadCount = ubershaderThreadCount;
 
 #ifdef ENABLE_OPTIMIZED_SHADER_GENERATION
-#   ifdef _WIN32
+#   if defined(_WIN32) && !defined(RT64_BUILD_PLUGIN)
         shaderCompiler = std::make_unique<ShaderCompiler>();
 #   endif
 

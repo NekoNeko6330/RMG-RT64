@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <mutex>
 #include <filesystem>
 
@@ -25,11 +26,13 @@ namespace RT64 {
         const RenderSwapChain *swapChain = nullptr;
         UserConfiguration::GraphicsAPI graphicsAPI;
         SDL_Window *sdlWindow = nullptr;
+        bool externalWindow = false;
+        std::chrono::steady_clock::time_point externalFrameTime;
         std::unique_ptr<RenderDescriptorSet> descriptorSet;
         std::unique_ptr<VulkanContext> vulkanContext;
         std::mutex frameMutex;
 
-        Inspector(RenderDevice *device, const RenderSwapChain *swapChain, UserConfiguration::GraphicsAPI graphicsAPI, SDL_Window *sdlWindow);
+        Inspector(RenderDevice *device, const RenderSwapChain *swapChain, UserConfiguration::GraphicsAPI graphicsAPI, SDL_Window *sdlWindow, bool externalWindow = false);
         ~Inspector();
         void setIniPath(const std::filesystem::path &path);
         void newFrame(RenderWorker *worker);
@@ -39,5 +42,10 @@ namespace RT64 {
         bool handleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 #   endif
         bool handleSdlEvent(SDL_Event *event);
+
+        // Input injection for hosts that own the window and forward their events (keys are SDL scancodes).
+        void injectKeyEvent(SDL_Scancode scancode, int keymod, bool down);
+        void injectMouseMove(float x, float y);
+        void injectMouseButton(int button, bool down);
     };
 };

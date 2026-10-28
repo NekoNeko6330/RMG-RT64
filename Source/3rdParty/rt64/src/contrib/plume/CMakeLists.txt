@@ -19,6 +19,7 @@ string(COMPARE EQUAL ${CMAKE_SYSTEM_NAME} "Linux" IS_LINUX)
 include(CMakeDependentOption)
 cmake_dependent_option(PLUME_SDL_VULKAN_ENABLED "Enable SDL Vulkan integration" OFF IS_LINUX OFF)
 cmake_dependent_option(PLUME_D3D12_AGILITY_SDK_ENABLED "Enable D3D12 Agility SDK" OFF WIN32 OFF)
+cmake_dependent_option(PLUME_D3D12_ENABLED "Enable the D3D12 backend" ON WIN32 OFF)
 cmake_dependent_option(PLUME_APPLE_RETINA_ENABLED "Enable Apple Retina display support" ON APPLE ON)
 option(PLUME_BUILD_EXAMPLES "Build example applications" OFF)
 
@@ -45,7 +46,7 @@ if(PLUME_D3D12_AGILITY_SDK_ENABLED)
 endif()
 
 # Print status messages
-message(STATUS "Plume - Building with backends: Vulkan=1 Metal=${APPLE} D3D12=${WIN32}")
+message(STATUS "Plume - Building with backends: Vulkan=1 Metal=${APPLE} D3D12=${PLUME_D3D12_ENABLED}")
 message(STATUS "Plume - SDL Vulkan integration: ${PLUME_SDL_VULKAN_ENABLED}")
 message(STATUS "Plume - D3D12 Agility SDK: ${PLUME_D3D12_AGILITY_SDK_ENABLED}")
 message(STATUS "Plume - Building examples: ${PLUME_BUILD_EXAMPLES}")
@@ -64,7 +65,7 @@ if(APPLE)
         plume_apple.mm
         plume_apple.h
     )
-elseif(WIN32)
+elseif(WIN32 AND PLUME_D3D12_ENABLED)
     list(APPEND PLUME_SOURCES
         plume_d3d12.cpp
         plume_d3d12.h
@@ -83,7 +84,7 @@ target_include_directories(plume PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/contrib/VulkanMemoryAllocator/include
 )
 
-if(WIN32)
+if(WIN32 AND PLUME_D3D12_ENABLED)
     target_include_directories(plume PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/contrib/D3D12MemoryAllocator/include
     )

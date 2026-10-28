@@ -19,18 +19,25 @@
 #include "imgui/backends/imgui_impl_vulkan.h"
 
 #if defined(_WIN32)
-#   include "imgui/backends/imgui_impl_dx12.h"
 #   include "imgui/backends/imgui_impl_win32.h"
 #   include "utf8conv/utf8conv.h"
+#endif
+
+#if defined(_WIN32) && !defined(RT64_BUILD_PLUGIN)
+#   include "imgui/backends/imgui_impl_dx12.h"
 #endif
 
 #if defined(__APPLE__)
 #   include "imgui/backends/imgui_impl_metal.h"
 #endif
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(RT64_BUILD_PLUGIN)
 #   include "plume_d3d12.h"
 #endif
+
+#include <cctype>
+
+extern ImGuiKey ImGui_ImplSDL2_KeyEventToImGuiKey(SDL_Keycode keycode, SDL_Scancode scancode);
 
 #if defined(__APPLE__)
 #   include "plume_metal.h"
@@ -64,7 +71,7 @@ namespace RT64 {
 
     // Inspector
 
-    Inspector::Inspector(RenderDevice *device, const RenderSwapChain *swapChain, UserConfiguration::GraphicsAPI graphicsAPI, SDL_Window *sdlWindow) {
+    Inspector::Inspector(RenderDevice *device, const RenderSwapChain *swapChain, UserConfiguration::GraphicsAPI graphicsAPI, SDL_Window *sdlWindow, bool externalWindow) {
         assert(device != nullptr);
         assert(swapChain != nullptr);
 
@@ -72,6 +79,7 @@ namespace RT64 {
         this->swapChain = swapChain;
         this->graphicsAPI = graphicsAPI;
         this->sdlWindow = sdlWindow;
+        this->externalWindow = externalWindow;
 
         IMGUI_CHECKVERSION();
 
@@ -82,6 +90,12 @@ namespace RT64 {
         if (sdlWindow != nullptr) {
             ImGui_ImplSDL2_InitForOther(sdlWindow);
         }
+        else if (externalWindow) {
+            // No platform backend: the host forwards its input through the inject functions.
+            ImGuiIO &io = ImGui::GetIO();
+            io.BackendPlatformName = "rt64_external_window";
+            externalFrameTime = std::chrono::steady_clock::now();
+        }
         else {
 #       ifdef _WIN32
             RenderWindow renderWindow = swapChain->getWindow();
@@ -91,7 +105,7 @@ namespace RT64 {
 
         switch (graphicsAPI) {
         case UserConfiguration::GraphicsAPI::D3D12: {
-#       ifdef _WIN32
+#       if defined(_WIN32) && !defined(RT64_BUILD_PLUGIN)
             D3D12Device *interfaceDevice = static_cast<D3D12Device *>(device);
             RenderDescriptorRange descriptorRange(RenderDescriptorRangeType::TEXTURE, 0, 1);
             descriptorSet = interfaceDevice->createDescriptorSet(RenderDescriptorSetDesc(&descriptorRange, 1));
@@ -164,7 +178,7 @@ namespace RT64 {
     Inspector::~Inspector() {
         switch (graphicsAPI) {
         case UserConfiguration::GraphicsAPI::D3D12: {
-#       ifdef _WIN32
+#       if defined(_WIN32) && !defined(RT64_BUILD_PLUGIN)
             ImGui_ImplDX12_Shutdown();
 #       else
             assert(false && "Unsupported Graphics API.");
@@ -192,7 +206,7 @@ namespace RT64 {
         if (sdlWindow != nullptr) {
             ImGui_ImplSDL2_Shutdown();
         }
-        else {
+        else if (!externalWindow) {
 #       ifdef _WIN32
             ImGui_ImplWin32_Shutdown();
 #       endif
@@ -216,6 +230,16 @@ namespace RT64 {
         if (sdlWindow != nullptr) {
             ImGui_ImplSDL2_NewFrame();
         }
+        else if (externalWindow) {
+            ImGuiIO &io = ImGui::GetIO();
+            io.DisplaySize = ImVec2(float(swapChain->getWidth()), float(swapChain->getHeight()));
+            io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+
+            const auto now = std::chrono::steady_clock::now();
+            const float deltaTime = std::chrono::duration<float>(now - externalFrameTime).count();
+            io.DeltaTime = (deltaTime > 0.0f) ? deltaTime : (1.0f / 60.0f);
+            externalFrameTime = now;
+        }
         else {
 #       ifdef _WIN32
             ImGui_ImplWin32_NewFrame();
@@ -224,7 +248,7 @@ namespace RT64 {
 
         switch (graphicsAPI) {
         case UserConfiguration::GraphicsAPI::D3D12: {
-#       ifdef _WIN32
+#       if defined(_WIN32) && !defined(RT64_BUILD_PLUGIN)
             ImGui_ImplDX12_NewFrame();
 #       else
             assert(false && "Unsupported Graphics API.");
@@ -264,7 +288,7 @@ namespace RT64 {
         if (drawData != nullptr) {
             switch (graphicsAPI) {
             case UserConfiguration::GraphicsAPI::D3D12: {
-#       ifdef _WIN32
+#       if defined(_WIN32) && !defined(RT64_BUILD_PLUGIN)
                 D3D12CommandList *interfaceCommandList = static_cast<D3D12CommandList *>(commandList);
                 interfaceCommandList->checkDescriptorHeaps();
                 ImGui_ImplDX12_RenderDrawData(drawData, interfaceCommandList->d3d);
@@ -326,5 +350,41 @@ namespace RT64 {
         }
         
         return false;
+    }
+
+    void Inspector::injectKeyEvent(SDL_Scancode scancode, int keymod, bool down) {
+        const std::lock_guard<std::mutex> frameLock(frameMutex);
+        ImGuiIO &io = ImGui::GetIO();
+        io.AddKeyEvent(ImGuiMod_Ctrl, (keymod & KMOD_CTRL) != 0);
+        io.AddKeyEvent(ImGuiMod_Shift, (keymod & KMOD_SHIFT) != 0);
+        io.AddKeyEvent(ImGuiMod_Alt, (keymod & KMOD_ALT) != 0);
+        io.AddKeyEvent(ImGuiMod_Super, (keymod & KMOD_GUI) != 0);
+
+        const SDL_Keycode keycode = SDL_GetKeyFromScancode(scancode);
+        const ImGuiKey key = ImGui_ImplSDL2_KeyEventToImGuiKey(keycode, scancode);
+        if (key != ImGuiKey_None) {
+            io.AddKeyEvent(key, down);
+            io.SetKeyEventNativeData(key, keycode, scancode, scancode);
+        }
+
+        // The host does not send text input events, so derive them from the keycode.
+        if (down && (keycode >= 32) && (keycode < 127) && ((keymod & (KMOD_CTRL | KMOD_ALT | KMOD_GUI)) == 0)) {
+            unsigned int character = static_cast<unsigned int>(keycode);
+            if ((keymod & KMOD_SHIFT) != 0) {
+                character = static_cast<unsigned int>(toupper(int(character)));
+            }
+
+            io.AddInputCharacter(character);
+        }
+    }
+
+    void Inspector::injectMouseMove(float x, float y) {
+        const std::lock_guard<std::mutex> frameLock(frameMutex);
+        ImGui::GetIO().AddMousePosEvent(x, y);
+    }
+
+    void Inspector::injectMouseButton(int button, bool down) {
+        const std::lock_guard<std::mutex> frameLock(frameMutex);
+        ImGui::GetIO().AddMouseButtonEvent(button, down);
     }
 };

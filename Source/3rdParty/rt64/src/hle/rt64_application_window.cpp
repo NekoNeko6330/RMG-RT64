@@ -79,6 +79,15 @@ namespace RT64 {
         }
     }
 
+    void ApplicationWindow::setupExternal(Listener *listener, uint32_t refreshRate) {
+        assert(listener != nullptr);
+
+        // The host owns the window: no native handle is available and no events are filtered here.
+        this->listener = listener;
+        this->externalWindow = true;
+        this->refreshRate = (refreshRate > 0) ? refreshRate : 60;
+    }
+
     void ApplicationWindow::setup(const char *windowTitle, Listener *listener) {
         assert(windowTitle != nullptr);
 
@@ -90,7 +99,9 @@ namespace RT64 {
         } bounds{};
 
 #   if defined(_WIN32)
+#   if !defined(RT64_BUILD_PLUGIN)
         SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+#   endif
 
         RECT rect;
         UINT dwStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
@@ -176,6 +187,12 @@ namespace RT64 {
             return;
         }
 
+        if (externalWindow) {
+            // Fullscreen is controlled by the host.
+            fullScreen = newFullScreen;
+            return;
+        }
+
 #   ifdef _WIN32
         if (newFullScreen) {
             // Save if window is maximized or not
@@ -249,6 +266,11 @@ namespace RT64 {
     }
 
     void ApplicationWindow::detectRefreshRate() {
+        if (externalWindow) {
+            // The rate was provided by the host.
+            return;
+        }
+
 #   if defined(_WIN32)
         HMONITOR monitor = MonitorFromWindow(windowHandle, MONITOR_DEFAULTTONEAREST);
         MONITORINFOEX info = {};
@@ -339,6 +361,10 @@ namespace RT64 {
     }
 
     bool ApplicationWindow::detectWindowMoved() {
+        if (externalWindow) {
+            return false;
+        }
+
         int32_t newWindowLeft = INT32_MAX;
         int32_t newWindowTop = INT32_MAX;
 
