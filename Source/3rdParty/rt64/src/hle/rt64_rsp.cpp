@@ -14,6 +14,7 @@
 
 #include "rt64_interpreter.h"
 #include "rt64_state.h"
+#include "rt64_shared_queue_resources.h"
 
 //#define LOG_SPECIAL_MATRIX_OPERATIONS
 
@@ -834,6 +835,62 @@ namespace RT64 {
         }
     }
     
+    // Whether the vertices are all off the screen on the same side, like the microcode's G_CULLDL: each vertex gets the
+    // flags of the screen's edges it's past in clip space (which, like on the console, are inverted for vertices behind
+    // the camera), and the vertices are culled if they all share one. The sides use the aspect ratio of the output, so
+    // nothing visible in widescreen is culled.
+    bool RSP::cullVertices(uint16_t vtxStart, uint16_t vtxEnd) {
+        if ((vtxStart > vtxEnd) || (vtxEnd >= RSP_MAX_VERTICES)) {
+            return false;
+        }
+
+        float aspectScale = 1.0f;
+        const SharedQueueResources *shared = state->ext.sharedQueueResources;
+        const float aspectSource = 4.0f / 3.0f;
+        switch (shared->userConfig.aspectRatio) {
+        case UserConfiguration::AspectRatio::Expand:
+            if ((shared->swapChainWidth > 0) && (shared->swapChainHeight > 0)) {
+                aspectScale = std::max(float(shared->swapChainWidth) / float(shared->swapChainHeight), aspectSource) / aspectSource;
+            }
+            break;
+        case UserConfiguration::AspectRatio::Manual:
+            aspectScale = std::max(float(shared->userConfig.aspectTarget), aspectSource) / aspectSource;
+            break;
+        default:
+            break;
+        }
+
+        // Without the workload queue, the vertices are unknown: never cull.
+        if (state->ext.workloadQueue == nullptr) {
+            return false;
+        }
+
+        const int workloadCursor = state->ext.workloadQueue->writeCursor;
+        const Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
+        uint32_t sharedFlags = 0x1F;
+        for (uint32_t i = vtxStart; i <= vtxEnd; i++) {
+            const uint32_t globalIndex = indices[i];
+            if (globalIndex >= workload.drawData.posTransformed.size()) {
+                return false;
+            }
+
+            const hlslpp::float4 &pos = workload.drawData.posTransformed[globalIndex];
+            const float x = pos.x, y = pos.y, z = pos.z, w = pos.w;
+            uint32_t flags = 0;
+            flags |= (x < -w * aspectScale) ? 0x01 : 0;
+            flags |= (x > w * aspectScale) ? 0x02 : 0;
+            flags |= (y < -w) ? 0x04 : 0;
+            flags |= (y > w) ? 0x08 : 0;
+            flags |= (z > w) ? 0x10 : 0;
+            sharedFlags &= flags;
+            if (sharedFlags == 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     void RSP::branchZ(uint32_t branchDl, uint16_t vtxIndex, uint32_t zValue, DisplayList **dl) {
         const bool forceBranch = state->ext.enhancementConfig->f3dex.forceBranch || extended.forceBranch;
         const int workloadCursor = state->ext.workloadQueue->writeCursor;

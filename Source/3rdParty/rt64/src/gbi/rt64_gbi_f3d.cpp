@@ -104,7 +104,13 @@ namespace RT64 {
         }
 
         void cullDl(State *state, DisplayList **dl) {
-            // TODO
+            // Fast3D encodes the vertex indices times 40 and the end index as (vend + 1).
+            const uint32_t vtxStart = (*dl)->p0(0, 24) / 40;
+            const uint32_t vtxEnd = (*dl)->p1(0, 24) / 40;
+            if ((vtxEnd > 0) && state->rsp->cullVertices(uint16_t(vtxStart), uint16_t(vtxEnd - 1))) {
+                // End the display list.
+                endDl(state, dl);
+            }
         }
 
         void moveWord(State *state, DisplayList **dl) {

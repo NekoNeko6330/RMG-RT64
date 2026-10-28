@@ -597,15 +597,15 @@ namespace RT64 {
         t.lrs = lrs;
         t.lrt = lrt;
 
-        // Ignored by the hardware.
-        if (t.uls > t.lrs) {
+        // Ignored by the hardware. A tile whose end row is above its start row loads nothing,
+        // otherwise the row count underflows and the load walks off the end of RDRAM.
+        if ((t.uls > t.lrs) || ((t.ult >> 2) > (t.lrt >> 2))) {
             return;
         }
 
 #   ifdef ASSERT_LOAD_METHODS
         assert((t.uls != t.lrs) || ((t.uls & 0x3) == 0) && "Unknown and possibly undefined hardware behavior.");
         assert((t.ult != t.lrt) || ((t.ult & 0x3) == 0) && "Unknown hardware behavior.");
-        assert((t.lrt <= t.lrt) && "Unknown hardware behavior.");
         assert((t.siz == texture.siz) && "Different tile and texture sizes are not currently supported.");
         assert((texture.siz != G_IM_SIZ_4b) && "4-bit texture image is not currently supported.");
         assert((t.fmt != G_IM_FMT_YUV) && "YUV is not currently supported.");
@@ -784,6 +784,11 @@ namespace RT64 {
         t.ult = ult;
         t.lrs = lrs;
         t.lrt = lrt;
+
+        // Ignored by the hardware. See RDP::loadTile.
+        if ((t.uls > t.lrs) || ((t.ult >> 2) > (t.lrt >> 2))) {
+            return;
+        }
 
 #   ifdef ASSERT_LOAD_METHODS
         assert((texture.siz == G_IM_SIZ_16b) && "Non-16 bit textures are not currently supported.");

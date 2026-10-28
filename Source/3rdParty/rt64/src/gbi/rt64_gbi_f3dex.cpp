@@ -39,7 +39,13 @@ namespace RT64 {
         }
 
         void cullDl(State *state, DisplayList **dl) {
-            // TODO
+            // Same encoding in F3DEX and F3DEX2: the vertices' indices times 2.
+            const uint16_t vtxStart = (*dl)->p0(0, 16) / 2;
+            const uint16_t vtxEnd = (*dl)->p1(0, 16) / 2;
+            if (state->rsp->cullVertices(vtxStart, vtxEnd)) {
+                // End the display list.
+                GBI_F3D::endDl(state, dl);
+            }
         }
 
         void branchZ(State *state, DisplayList **dl) {

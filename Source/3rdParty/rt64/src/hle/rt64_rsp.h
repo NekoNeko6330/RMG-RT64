@@ -280,6 +280,7 @@ namespace RT64 {
         void setLookAt(uint8_t index, uint32_t address);
         void setLookAtVectors(interop::float3 x, interop::float3 y);
         void setFog(int16_t mul, int16_t offset);
+        bool cullVertices(uint16_t vtxStart, uint16_t vtxEnd);
         void branchZ(uint32_t branchDl, uint16_t vtxIndex, uint32_t zValue, DisplayList **dl);
         void branchW(uint32_t branchDl, uint16_t vtxIndex, uint32_t wValue, DisplayList **dl);
         void setTexture(uint8_t tile, uint8_t level, uint8_t on, uint16_t sc, uint16_t tc);
