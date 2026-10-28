@@ -44,6 +44,7 @@ set(RMG_CORE_SOURCES
     String.cpp
     Volume.cpp
     VidExt.cpp
+    Mouse.cpp
     Video.cpp
     Error.cpp
     Core.cpp
