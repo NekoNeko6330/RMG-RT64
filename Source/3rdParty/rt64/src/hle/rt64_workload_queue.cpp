@@ -1152,6 +1152,20 @@ namespace RT64 {
                     framesRendered++;
                 }
 
+                // The interpolated frames leave the real render targets of the presented framebuffer holding a blended frame: without
+                // MSAA the first displayed frame (which is only part of the way to the current frame) is rendered into them and the rest
+                // go to the interpolated targets, and with MSAA the last frame that was rendered before frames got skipped stays in them.
+                // Anything that reads those targets afterwards (framebuffer copies and readbacks the game does on the next frame, like
+                // the pause menu player pre-render in Ocarina of Time) would capture a blend of two poses, so render the exact current
+                // frame into the real targets when they don't hold it already.
+                if (generateInterpolatedFrames && (framesRendered > 0)) {
+                    const bool realTargetsExact = usingMSAA ? (curFrameWeight >= 1.0f) : (displayFrames == 1);
+                    if (!realTargetsExact) {
+                        threadRenderFrame(curFrame, prevFrame, workloadConfig, workload.debuggerRenderer, workload.debuggerCamera, 1.0f, 0.0f, deltaTimeMs,
+                            interpolationTargetKey, interpolationTargetFbPairIndex, nullptr, 0, velocityUploaderUsed, false, tileInterpolationUsed, lookAtInterpolationUsed);
+                    }
+                }
+
                 // Set the skipped parameter on the frame counter if the workload wasn't skipped but some of its frames were.
                 if (skippedFrames && !skipWorkloadNow) {
                     {
