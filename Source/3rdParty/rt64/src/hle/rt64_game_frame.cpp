@@ -5,6 +5,8 @@
 #include "common/rt64_math.h"
 
 #include "rt64_game_frame.h"
+
+#include <algorithm>
 #include "rt64_workload_queue.h"
 
 #include "xxHash/xxh3.h"
@@ -510,69 +512,109 @@ namespace RT64 {
         }
 
         // FIXME: Transform set needs to be done per unique workload detected.
-        thread_local std::set<IndexPair> transformCheckSet;
-        thread_local std::set<IndexPair> tileCheckSet;
-        thread_local std::set<IndexPair> lookAtCheckSet;
+        // The pairs are collected in vectors and sorted afterwards, which is a lot cheaper
+        // than inserting every candidate pair into a tree set. The iteration order is the same.
+        thread_local std::vector<IndexPair> transformCheckSet;
+        thread_local std::vector<IndexPair> tileCheckSet;
+        thread_local std::vector<IndexPair> lookAtCheckSet;
         transformCheckSet.clear();
         tileCheckSet.clear();
         lookAtCheckSet.clear();
 
-        // Traverse the map and fill the set with all the combinations of transforms to check.
-        for (std::pair<uint64_t, GameCallMap> curIt : curCallHashMap) {
-            auto prevRange = prevCallHashMap.equal_range(curIt.first);
-            for (auto prevIt = prevRange.first; prevIt != prevRange.second; prevIt++) {
-                const GameIndices::Projection &curProjIndices = curScene.projections[curIt.second.sceneProjIndex];
-                const Workload &curWorkload = workloadQueue.workloads[curProjIndices.workloadIndex];
-                const FramebufferPair &curFbPair = curWorkload.fbPairs[curProjIndices.fbPairIndex];
-                const Projection &curProj = curFbPair.projections[curProjIndices.projectionIndex];
-                const GameCall &curCall = curProj.gameCalls[curIt.second.callIndex];
-                const GameIndices::Projection &prevProjIndices = prevScene.projections[prevIt->second.sceneProjIndex];
-                const Workload &prevWorkload = workloadQueue.workloads[prevProjIndices.workloadIndex];
-                const FramebufferPair &prevFbPair = prevWorkload.fbPairs[prevProjIndices.fbPairIndex];
-                const Projection &prevProj = prevFbPair.projections[prevProjIndices.projectionIndex];
-                const GameCall &prevCall = prevProj.gameCalls[prevIt->second.callIndex];
-                const uint32_t curWorldMatrixCount = (curCall.callDesc.maxWorldMatrix - curCall.callDesc.minWorldMatrix) + 1;
-                const uint32_t prevWorldMatrixCount = (prevCall.callDesc.maxWorldMatrix - prevCall.callDesc.minWorldMatrix) + 1;
-                if ((curWorldMatrixCount == prevWorldMatrixCount) && curIt.second.doTransformMatching && prevIt->second.doTransformMatching) {
-                    for (uint32_t w = 0; w < curWorldMatrixCount; w++) {
-                        const uint32_t curWorldMatrix = curCall.callDesc.minWorldMatrix + w;
-                        const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curWorldMatrix];
-                        const TransformGroup &curGroup = curWorkload.drawData.transformGroups[curGroupIndex];
-                        const uint32_t prevWorldMatrix = prevCall.callDesc.minWorldMatrix + w;
-                        const uint32_t prevGroupIndex = prevWorkload.drawData.worldTransformGroups[prevWorldMatrix];
-                        const TransformGroup &prevGroup = prevWorkload.drawData.transformGroups[prevGroupIndex];
-                        if ((curGroup.matrixId == prevGroup.matrixId) && ((curGroup.matrixId == G_EX_ID_AUTO) || ((curGroup.matrixId != G_EX_ID_IGNORE) && (curGroup.ordering == G_EX_ORDER_AUTO)))) {
-                            transformCheckSet.emplace(curWorldMatrix, prevWorldMatrix);
-                        }
+        auto sortAndUnique = [](std::vector<IndexPair> &pairs) {
+            std::sort(pairs.begin(), pairs.end());
+            pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+        };
+
+        // Every call in a hash bucket is paired with every call in the same bucket of the previous frame. Scenes made out
+        // of many identical calls (e.g. hundreds of wall pieces that share the combiner, mode and triangle count) would
+        // make this quadratic and take hundreds of milliseconds per frame, so oversized buckets fall back to pairing the
+        // calls in the order they were submitted, which is what the greedy matching below would pick anyway when the
+        // order of the calls didn't change between frames.
+        const size_t MaxBucketPairs = 4096;
+        auto checkCallPair = [&](const GameCallMap &curMap, const GameCallMap &prevMap) {
+            const GameIndices::Projection &curProjIndices = curScene.projections[curMap.sceneProjIndex];
+            const Workload &curWorkload = workloadQueue.workloads[curProjIndices.workloadIndex];
+            const FramebufferPair &curFbPair = curWorkload.fbPairs[curProjIndices.fbPairIndex];
+            const Projection &curProj = curFbPair.projections[curProjIndices.projectionIndex];
+            const GameCall &curCall = curProj.gameCalls[curMap.callIndex];
+            const GameIndices::Projection &prevProjIndices = prevScene.projections[prevMap.sceneProjIndex];
+            const Workload &prevWorkload = workloadQueue.workloads[prevProjIndices.workloadIndex];
+            const FramebufferPair &prevFbPair = prevWorkload.fbPairs[prevProjIndices.fbPairIndex];
+            const Projection &prevProj = prevFbPair.projections[prevProjIndices.projectionIndex];
+            const GameCall &prevCall = prevProj.gameCalls[prevMap.callIndex];
+            const uint32_t curWorldMatrixCount = (curCall.callDesc.maxWorldMatrix - curCall.callDesc.minWorldMatrix) + 1;
+            const uint32_t prevWorldMatrixCount = (prevCall.callDesc.maxWorldMatrix - prevCall.callDesc.minWorldMatrix) + 1;
+            if ((curWorldMatrixCount == prevWorldMatrixCount) && curMap.doTransformMatching && prevMap.doTransformMatching) {
+                for (uint32_t w = 0; w < curWorldMatrixCount; w++) {
+                    const uint32_t curWorldMatrix = curCall.callDesc.minWorldMatrix + w;
+                    const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curWorldMatrix];
+                    const TransformGroup &curGroup = curWorkload.drawData.transformGroups[curGroupIndex];
+                    const uint32_t prevWorldMatrix = prevCall.callDesc.minWorldMatrix + w;
+                    const uint32_t prevGroupIndex = prevWorkload.drawData.worldTransformGroups[prevWorldMatrix];
+                    const TransformGroup &prevGroup = prevWorkload.drawData.transformGroups[prevGroupIndex];
+                    if ((curGroup.matrixId == prevGroup.matrixId) && ((curGroup.matrixId == G_EX_ID_AUTO) || ((curGroup.matrixId != G_EX_ID_IGNORE) && (curGroup.ordering == G_EX_ORDER_AUTO)))) {
+                        transformCheckSet.emplace_back(curWorldMatrix, prevWorldMatrix);
                     }
-                }
-
-                if ((curCall.callDesc.tileCount == prevCall.callDesc.tileCount) && (curIt.second.doTileInterpolation && prevIt->second.doTileInterpolation)) {
-                    for (uint32_t t = 0; t < curCall.callDesc.tileCount; t++) {
-                        const DrawCallTile &curCallTile = curWorkload.drawData.callTiles[curCall.callDesc.tileIndex + t];
-                        const DrawCallTile &prevCallTile = prevWorkload.drawData.callTiles[prevCall.callDesc.tileIndex + t];
-                        bool doTileMatching = curIt.second.doTileMatching && prevIt->second.doTileMatching;
-                        if (doTileMatching && (curCallTile.tmemHashOrID != prevCallTile.tmemHashOrID)) {
-                            continue;
-                        }
-
-                        tileCheckSet.emplace(curCall.callDesc.tileIndex + t, prevCall.callDesc.tileIndex + t);
-                    }
-                }
-
-                const uint32_t textureGenMask = G_LIGHTING | G_TEXTURE_GEN;
-                const bool curUsesTextureGen = (curCall.callDesc.geometryMode & textureGenMask) == textureGenMask;
-                const bool prevUsesTextureGen = (prevCall.callDesc.geometryMode & textureGenMask) == textureGenMask;
-                if (curUsesTextureGen && prevUsesTextureGen && (true && true)) { // TODO: Do look at matching condition.
-                    // FIXME: We assume the same look at is used throughout the entire draw call, so we only check the first vertex.
-                    const uint32_t curVertexIndex = curWorkload.drawData.faceIndices[curCall.meshDesc.faceIndicesStart];
-                    const uint32_t prevVertexIndex = prevWorkload.drawData.faceIndices[prevCall.meshDesc.faceIndicesStart];
-                    const uint32_t curLookAtIndex = curWorkload.drawData.lookAtIndices[curVertexIndex] >> RSP_LOOKAT_INDEX_SHIFT;
-                    const uint32_t prevLookAtIndex = prevWorkload.drawData.lookAtIndices[prevVertexIndex] >> RSP_LOOKAT_INDEX_SHIFT;
-                    lookAtCheckSet.emplace(curLookAtIndex, prevLookAtIndex);
                 }
             }
+
+            if ((curCall.callDesc.tileCount == prevCall.callDesc.tileCount) && (curMap.doTileInterpolation && prevMap.doTileInterpolation)) {
+                for (uint32_t t = 0; t < curCall.callDesc.tileCount; t++) {
+                    const DrawCallTile &curCallTile = curWorkload.drawData.callTiles[curCall.callDesc.tileIndex + t];
+                    const DrawCallTile &prevCallTile = prevWorkload.drawData.callTiles[prevCall.callDesc.tileIndex + t];
+                    bool doTileMatching = curMap.doTileMatching && prevMap.doTileMatching;
+                    if (doTileMatching && (curCallTile.tmemHashOrID != prevCallTile.tmemHashOrID)) {
+                        continue;
+                    }
+
+                    tileCheckSet.emplace_back(curCall.callDesc.tileIndex + t, prevCall.callDesc.tileIndex + t);
+                }
+            }
+
+            const uint32_t textureGenMask = G_LIGHTING | G_TEXTURE_GEN;
+            const bool curUsesTextureGen = (curCall.callDesc.geometryMode & textureGenMask) == textureGenMask;
+            const bool prevUsesTextureGen = (prevCall.callDesc.geometryMode & textureGenMask) == textureGenMask;
+            if (curUsesTextureGen && prevUsesTextureGen && (true && true)) { // TODO: Do look at matching condition.
+                // FIXME: We assume the same look at is used throughout the entire draw call, so we only check the first vertex.
+                const uint32_t curVertexIndex = curWorkload.drawData.faceIndices[curCall.meshDesc.faceIndicesStart];
+                const uint32_t prevVertexIndex = prevWorkload.drawData.faceIndices[prevCall.meshDesc.faceIndicesStart];
+                const uint32_t curLookAtIndex = curWorkload.drawData.lookAtIndices[curVertexIndex] >> RSP_LOOKAT_INDEX_SHIFT;
+                const uint32_t prevLookAtIndex = prevWorkload.drawData.lookAtIndices[prevVertexIndex] >> RSP_LOOKAT_INDEX_SHIFT;
+                lookAtCheckSet.emplace_back(curLookAtIndex, prevLookAtIndex);
+            }
+        };
+
+        // Traverse the map and fill the sets with all the combinations of transforms to check.
+        auto curIt = curCallHashMap.begin();
+        while (curIt != curCallHashMap.end()) {
+            auto curRange = curCallHashMap.equal_range(curIt->first);
+            auto prevRange = prevCallHashMap.equal_range(curIt->first);
+            const size_t curCount = size_t(std::distance(curRange.first, curRange.second));
+            const size_t prevCount = size_t(std::distance(prevRange.first, prevRange.second));
+            if ((curCount * prevCount) <= MaxBucketPairs) {
+                for (auto curBucketIt = curRange.first; curBucketIt != curRange.second; curBucketIt++) {
+                    for (auto prevBucketIt = prevRange.first; prevBucketIt != prevRange.second; prevBucketIt++) {
+                        checkCallPair(curBucketIt->second, prevBucketIt->second);
+                    }
+                }
+            }
+            else {
+                auto curBucketIt = curRange.first;
+                auto prevBucketIt = prevRange.first;
+                while ((curBucketIt != curRange.second) && (prevBucketIt != prevRange.second)) {
+                    checkCallPair(curBucketIt->second, prevBucketIt->second);
+                    curBucketIt++;
+                    prevBucketIt++;
+                }
+            }
+
+            curIt = curRange.second;
         }
+
+        sortAndUnique(transformCheckSet);
+        sortAndUnique(tileCheckSet);
+        sortAndUnique(lookAtCheckSet);
 
         // Compute all the differences between transforms and insert them into a vector that will be sorted according to the differences.
         thread_local std::vector<MatchCandidate> matchCandidates;
